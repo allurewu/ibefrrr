@@ -1,0 +1,423 @@
+import React from "react";
+import { motion } from "motion/react";
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  RefreshCw, 
+  Layers, 
+  Coins, 
+  CheckCircle, 
+  ArrowUpRight, 
+  AlertCircle,
+  HelpCircle
+} from "lucide-react";
+import { InvestmentRecord, ValueAveragePlan, AppSettings, StockQuote } from "../types";
+import { formatCurrency, formatPercent, getElapsedMonths, getTargetValueForMonth } from "../utils";
+
+interface DashboardProps {
+  records: InvestmentRecord[];
+  plan: ValueAveragePlan | null;
+  settings: AppSettings;
+  quotes: Record<"QQQM" | "VOO", StockQuote | null>;
+  loadingQuotes: boolean;
+  onRefreshQuotes: () => void;
+  onQuickRecord: (prefills: { qqqmAmount: number; vooAmount: number }) => void;
+  onNavigateToPlan: () => void;
+  supabaseError?: string | null;
+  supabaseEmpty?: boolean;
+}
+
+export default function Dashboard({
+  records,
+  plan,
+  settings,
+  quotes,
+  loadingQuotes,
+  onRefreshQuotes,
+  onQuickRecord,
+  onNavigateToPlan,
+  supabaseError,
+  supabaseEmpty,
+}: DashboardProps) {
+  // Calculations
+  const qqqmRecords = records.filter(r => r.symbol === "QQQM");
+  const vooRecords = records.filter(r => r.symbol === "VOO");
+
+  const qqqmShares = qqqmRecords.reduce((sum, r) => sum + r.shares, 0);
+  const qqqmCost = qqqmRecords.reduce((sum, r) => sum + r.amount, 0);
+  const qqqmAvgCost = qqqmShares > 0 ? qqqmCost / qqqmShares : 0;
+
+  const vooShares = vooRecords.reduce((sum, r) => sum + r.shares, 0);
+  const vooCost = vooRecords.reduce((sum, r) => sum + r.amount, 0);
+  const vooAvgCost = vooShares > 0 ? vooCost / vooShares : 0;
+
+  const qqqmPrice = quotes.QQQM?.price ?? qqqmAvgCost ?? 0;
+  const vooPrice = quotes.VOO?.price ?? vooAvgCost ?? 0;
+
+  const qqqmValue = qqqmShares * qqqmPrice;
+  const vooValue = vooShares * vooPrice;
+
+  // Overview Stats
+  const totalAssets = qqqmValue + vooValue;
+  const totalInvested = qqqmCost + vooCost;
+  const totalGain = totalAssets - totalInvested;
+  const totalGainPercent = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
+
+  // Daily gain
+  const qqqmDailyGain = quotes.QQQM ? qqqmValue * (quotes.QQQM.changePercent / 100) : 0;
+  const vooDailyGain = quotes.VOO ? vooValue * (quotes.VOO.changePercent / 100) : 0;
+  const todayGain = qqqmDailyGain + vooDailyGain;
+
+  // Individual accumulated gain
+  const qqqmGain = qqqmValue - qqqmCost;
+  const qqqmGainPercent = qqqmCost > 0 ? (qqqmGain / qqqmCost) * 100 : 0;
+
+  const vooGain = vooValue - vooCost;
+  const vooGainPercent = vooCost > 0 ? (vooGain / vooCost) * 100 : 0;
+
+  // VA core calculation
+  let elapsedMonths = 1;
+  let targetValue = 0;
+  let gap = 0;
+  let suggestedInvestment = 0;
+  let qqqmSuggest = 0;
+  let vooSuggest = 0;
+  let currentMonthLabel = "";
+
+  if (plan) {
+    elapsedMonths = getElapsedMonths(plan.startDate);
+    targetValue = getTargetValueForMonth(elapsedMonths, plan.initialCapital, plan.monthlyGrowth);
+    gap = targetValue - totalAssets;
+    suggestedInvestment = gap > 0 ? gap : 0;
+
+    // Ratios split
+    const qqqmRatioDecimal = settings.qqqmRatio / 100;
+    const vooRatioDecimal = settings.vooRatio / 100;
+
+    qqqmSuggest = suggestedInvestment * qqqmRatioDecimal;
+    vooSuggest = suggestedInvestment * vooRatioDecimal;
+
+    // Calculate current month date label
+    const planStart = new Date(plan.startDate + "T00:00:00");
+    const labelDate = new Date(planStart);
+    labelDate.setMonth(planStart.getMonth() + elapsedMonths - 1);
+    currentMonthLabel = `${labelDate.getFullYear()}-${String(labelDate.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  return (
+    <div className="space-y-5 pb-24">
+      {/* 5.4 Premium Financial Header */}
+      <div className="flex justify-between items-center py-2.5 px-0 relative overflow-hidden select-none">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-sm tracking-tighter shrink-0">
+            VA
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-black text-slate-800 tracking-tight leading-none">VA INVEST</span>
+              <span className="inline-flex items-center gap-1 text-[8px] bg-brand-green/10 text-brand-green px-1.5 py-0.5 rounded-full font-bold">
+                <span className="w-1 h-1 rounded-full bg-brand-green animate-pulse"></span>
+                LIVE
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-medium tracking-normal mt-1 leading-none">价值平均算法定投系统</p>
+          </div>
+        </div>
+        <div className="flex items-center">
+          {loadingQuotes ? (
+            <span className="text-slate-400 text-[10px] font-bold flex items-center gap-1 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 animate-pulse">
+              <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />
+              同步报价
+            </span>
+          ) : (
+            <button
+              onClick={onRefreshQuotes}
+              disabled={loadingQuotes}
+              id="refresh_rates_btn"
+              className="px-3.5 py-1.5 bg-white text-slate-700 hover:text-blue-600 hover:bg-blue-50 border border-slate-200 hover:border-blue-500/30 transition-all rounded-full text-[10px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <RefreshCw className="w-3 h-3 text-blue-500" />
+              <span>智能刷新</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {supabaseError && (
+        <div className="p-3.5 bg-brand-red/5 border border-brand-red/20 text-brand-red text-xs rounded-2xl flex items-center gap-2 font-bold">
+          <AlertCircle className="w-4 h-4 text-brand-red shrink-0" />
+          <span>{supabaseError}</span>
+        </div>
+      )}
+
+      {supabaseEmpty && (
+        <div className="p-4 bg-brand-yellow/5 border border-brand-yellow/20 text-brand-yellow text-xs rounded-2xl space-y-2">
+          <div className="flex items-center gap-2 font-bold text-brand-yellow">
+            <AlertCircle className="w-4.5 h-4.5 text-brand-yellow shrink-0" />
+            <span>检测到数据库无数据 (已成功连接 Supabase)</span>
+          </div>
+          <div className="pl-6.5 space-y-1.5 text-slate-600 leading-relaxed font-medium">
+            <p>1. <strong className="text-brand-yellow">行级安全 RLS 拦截（最常见）</strong>：Supabase 的表默认开启了 RLS 且默认拒绝所有读取请求（不报错，只返回空数组 <code className="bg-brand-yellow/10 px-1 rounded font-mono">[]</code>）。</p>
+            <p className="border-l-2 border-brand-yellow/30 pl-2 mt-0.5 ml-2 text-[11px] text-slate-500">
+              💡 <strong>解决方法</strong>：在 Supabase 控制台 of <strong className="text-brand-yellow">Table Editor</strong>、<strong className="text-brand-yellow">RLS Policies</strong> 或 SQL Editor 里点击您的表，选择 <strong className="text-brand-yellow">Disable RLS</strong>（禁用安全策略），或点击 <strong className="text-brand-yellow">Add Policy</strong> 并创建一条允许所有人读取（SELECT）的策略即可。
+            </p>
+            <p className="pt-1">2. <strong className="text-brand-yellow">表内确实无记录</strong>：请确保 <code className="bg-brand-yellow/10 px-1 rounded font-mono">stock_prices</code> 表中已插入 Symbol 为 <code className="font-mono font-bold text-brand-yellow">VOO</code>、<code className="font-mono font-bold text-brand-yellow">QQQM</code> 的行数据（字母需大写）。</p>
+          </div>
+        </div>
+      )}
+
+      {/* 1.3 VA核心卡片 - Styled in striking solid color theme from design */}
+      {!plan ? (
+        <div className="rounded-2xl border border-dashed border-[#FFFFFF] bg-[#F3F3F3] p-4 text-center space-y-4 mb-4">
+          <div className="inline-flex p-3 rounded-full bg-brand-yellow/5 text-brand-yellow border border-brand-yellow/20">
+            <AlertCircle className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide mb-2">未开始定投计划</h3>
+            <p className="text-[11px] text-slate-400 max-w-xs mx-auto leading-relaxed">
+              智能定投需要设定起始日与月内预定资本增长
+            </p>
+          </div>
+          <button
+            onClick={onNavigateToPlan}
+            id="go_to_plan_config"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-extrabold rounded-xl transition duration-200 cursor-pointer"
+          >
+            立即配置 VA 定投计划
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-blue-600 text-white p-4 mb-4 space-y-4 relative overflow-hidden transition-all">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="text-[12px] leading-[16px] font-bold tracking-tight">
+                定投周期 {currentMonthLabel}（{String(elapsedMonths).padStart(2, '0')}期）
+              </div>
+            </div>
+            <span className="text-[10px] bg-white/15 px-2 py-0.5 rounded-md font-semibold tracking-wide flex-shrink-0">
+              智能差额核算
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-white/10 p-2.5 rounded-xl border border-white/5">
+              <p className="text-[9px] opacity-80 uppercase font-bold tracking-wider">当前资产</p>
+              <p className="text-xs font-extrabold mt-1 font-mono">{formatCurrency(totalAssets)}</p>
+            </div>
+            <div className="bg-white/10 p-2.5 rounded-xl border border-[#FFFFFF]/10 border-white/5">
+              <p className="text-[9px] opacity-80 uppercase font-bold tracking-wider">目标市值</p>
+              <p className="text-xs font-extrabold mt-1 font-mono">{formatCurrency(targetValue)}</p>
+            </div>
+            <div className="bg-white/10 p-2.5 rounded-xl border border-white/5">
+              <p className="text-[9px] opacity-80 uppercase font-bold tracking-wider">当前差额</p>
+              <p className="text-xs font-extrabold mt-1 font-mono">
+                {gap > 0 ? `-$${Math.abs(gap).toFixed(2)}` : `+$${Math.abs(gap).toFixed(2)}`}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white/10 border border-white/10 rounded-xl p-4 mb-4 space-y-3">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-white/85 font-medium">建议本月投入金额:</span>
+              {suggestedInvestment > 0 ? (
+                <span className="font-mono font-extrabold text-white text-[12px] leading-[16px]">
+                  {formatCurrency(suggestedInvestment)}
+                </span>
+              ) : (
+                <span className="font-bold text-white bg-brand-green/30 px-2 py-1 rounded-md text-[10px] flex items-center gap-1 border border-brand-green/20">
+                  <CheckCircle className="w-3 h-3" />
+                  市值达标，本月无需定投
+                </span>
+              )}
+            </div>
+
+            {suggestedInvestment > 0 && (
+              <div className="pt-1">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-white/5 p-2.5 rounded-lg border border-white/5">
+                    <span className="opacity-75 text-[9px] block mb-1">QQQM 比例：{settings.qqqmRatio}%</span>
+                    <span className="font-mono font-extrabold text-white">应投：{formatCurrency(qqqmSuggest)}</span>
+                  </div>
+                  <div className="bg-white/5 p-2.5 rounded-lg border border-white/5">
+                    <span className="opacity-75 text-[9px] block mb-1">VOO 比例：{settings.vooRatio}%</span>
+                    <span className="font-mono font-extrabold text-white">应投：{formatCurrency(vooSuggest)}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => onQuickRecord({ qqqmAmount: qqqmSuggest, vooAmount: vooSuggest })}
+            id="record_va_suggested_btn"
+            disabled={suggestedInvestment <= 0}
+            className={`w-full py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
+              suggestedInvestment > 0 
+                ? "bg-white text-blue-600 hover:bg-slate-50 active:scale-[0.98]" 
+                : "bg-white/15 text-white/40 cursor-not-allowed"
+            }`}
+          >
+            <ArrowUpRight className="w-4 h-4 text-inherit" />
+            <span>记录本次定投账目</span>
+          </button>
+        </div>
+      )}
+
+      {/* ETF持仓明细 */}
+      <div className="space-y-3 transition-all duration-300">
+        <div className="flex justify-between items-center pb-0 px-0">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">ETF持仓明细</span>
+          <span className="text-[10px] text-slate-400 font-bold font-mono">分配比例</span>
+        </div>
+
+        {/* 1.1 资产总览 - 2-Card Summary Grid moved under title */}
+        <div className="grid grid-cols-2 gap-3">
+          {/* Card 1: 总资产 */}
+          <div className="bg-[#F3F3F3] border border-[#FFFFFF] rounded-2xl p-4 transition-all flex flex-col justify-between min-h-[105px]">
+            <div>
+              <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase leading-none">总资产</div>
+              <div className="text-base sm:text-lg font-extrabold text-slate-800 font-mono mt-1.5 tracking-tight break-all">
+                {formatCurrency(totalAssets)}
+              </div>
+            </div>
+            <div className={`text-[10px] font-semibold flex items-center gap-0.5 leading-none mt-2 ${totalGain >= 0 ? "text-brand-green" : "text-brand-red"}`}>
+              <span>{totalGain >= 0 ? "+" : ""}{formatCurrency(totalGain)} ({totalGainPercent >= 0 ? "+" : ""}{totalGainPercent.toFixed(2)}%)</span>
+            </div>
+          </div>
+ 
+          {/* Card 2: 总投入本金/今日盈亏 */}
+          <div className="bg-[#F3F3F3] border border-[#FFFFFF] rounded-2xl p-4 transition-all flex flex-col justify-between min-h-[105px]">
+            <div>
+              <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase leading-none">总投入本金</div>
+              <div className="text-base sm:text-lg font-extrabold text-slate-800 font-mono mt-1.5 tracking-tight break-all">
+                {formatCurrency(totalInvested)}
+              </div>
+            </div>
+            <div className={`text-[10px] font-semibold flex items-center gap-0.5 leading-none mt-2 ${todayGain >= 0 ? "text-brand-green" : "text-brand-red"}`}>
+              <span>今日盈亏：{todayGain >= 0 ? "+" : ""}{formatCurrency(todayGain)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {/* QQQM Card */}
+          <div className="bg-[#F3F3F3] border border-[#FFFFFF] rounded-2xl p-4 mb-3 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#6366F1]" />
+                <span className="text-xs font-black text-slate-800 font-sans tracking-tight">QQQM</span>
+                <span className="text-[10px] bg-[#6366F1]/10 text-[#6366F1] px-1.5 py-0.5 rounded font-bold">
+                  纳指100 ETF
+                </span>
+              </div>
+              <span className="text-[10px] font-bold font-mono text-slate-600">
+                {totalAssets > 0 ? ((qqqmValue / totalAssets) * 100).toFixed(1) : "0.0"}%
+              </span>
+            </div>
+
+            <div className="flex justify-between items-baseline pt-0.5">
+              <div>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider leading-none">持仓市值</p>
+                <p className="text-sm font-extrabold text-[#18181B] font-mono mt-1 tracking-tight">
+                  {formatCurrency(qqqmValue)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider leading-none">累计盈亏</p>
+                <div className={`text-[10px] sm:text-xs font-extrabold font-mono mt-0.5 ${qqqmGain >= 0 ? "text-brand-green" : "text-brand-red"}`}>
+                  {qqqmGain >= 0 ? "+" : ""}{formatCurrency(qqqmGain)} ({qqqmGainPercent >= 0 ? "+" : ""}{qqqmGainPercent.toFixed(2)}%)
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 pt-1.5 border-t border-[#EBEBEB] text-[10px] text-slate-500 font-bold font-mono">
+              <div>
+                <span className="text-slate-400 text-[10px] block leading-snug">持股数量</span>
+                <span className="text-slate-700">{qqqmShares.toFixed(3)}</span>
+              </div>
+              <div className="text-center">
+                <span className="text-slate-400 text-[10px] block leading-snug">持仓均价</span>
+                <span className="text-slate-700">{formatCurrency(qqqmAvgCost)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={onRefreshQuotes}
+                disabled={loadingQuotes}
+                title="点击调用 Edge Function 刷新行情"
+                className="text-right cursor-pointer hover:bg-slate-200/60 active:scale-95 transition-all rounded px-1.5 py-0.5 -mr-1.5 -my-0.5 flex flex-col items-end disabled:opacity-50"
+              >
+                <span className="text-slate-400 text-[10px] flex items-center gap-1 font-bold">
+                  当前市价
+                  <RefreshCw className={`w-2.5 h-2.5 text-[#6366F1] shrink-0 ${loadingQuotes ? 'animate-spin' : ''}`} />
+                </span>
+                <span className="text-slate-700 font-extrabold font-mono">
+                  {quotes.QQQM ? formatCurrency(quotes.QQQM.price) : "--"}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* VOO Card */}
+          <div className="bg-[#F3F3F3] border border-[#FFFFFF] rounded-2xl p-4 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#0EA5E9]" />
+                <span className="text-xs font-black text-slate-800 font-sans tracking-tight">VOO</span>
+                <span className="text-[10px] bg-[#0EA5E9]/10 text-[#0EA5E9] px-1.5 py-0.5 rounded font-bold">
+                  标普500 ETF
+                </span>
+              </div>
+              <span className="text-[10px] font-bold font-mono text-slate-600">
+                {totalAssets > 0 ? ((vooValue / totalAssets) * 100).toFixed(1) : "0.0"}%
+              </span>
+            </div>
+
+            <div className="flex justify-between items-baseline pt-0.5">
+              <div>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider leading-none">持仓市值</p>
+                <p className="text-sm font-extrabold text-[#18181B] font-mono mt-1 tracking-tight">
+                  {formatCurrency(vooValue)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider leading-none">累计盈亏</p>
+                <div className={`text-[10px] sm:text-xs font-extrabold font-mono mt-0.5 ${vooGain >= 0 ? "text-brand-green" : "text-brand-red"}`}>
+                  {vooGain >= 0 ? "+" : ""}{formatCurrency(vooGain)} ({vooGainPercent >= 0 ? "+" : ""}{vooGainPercent.toFixed(2)}%)
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1 pt-1.5 border-t border-[#EBEBEB] text-[10px] text-slate-500 font-bold font-mono">
+              <div>
+                <span className="text-slate-400 text-[10px] block leading-snug">持股数量</span>
+                <span className="text-slate-700">{vooShares.toFixed(3)}</span>
+              </div>
+              <div className="text-center">
+                <span className="text-slate-400 text-[10px] block leading-snug">持仓均价</span>
+                <span className="text-slate-700">{formatCurrency(vooAvgCost)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={onRefreshQuotes}
+                disabled={loadingQuotes}
+                title="点击调用 Edge Function 刷新行情"
+                className="text-right cursor-pointer hover:bg-slate-200/60 active:scale-95 transition-all rounded px-1.5 py-0.5 -mr-1.5 -my-0.5 flex flex-col items-end disabled:opacity-50"
+              >
+                <span className="text-slate-400 text-[10px] flex items-center gap-1 font-bold">
+                  当前市价
+                  <RefreshCw className={`w-2.5 h-2.5 text-[#0EA5E9] shrink-0 ${loadingQuotes ? 'animate-spin' : ''}`} />
+                </span>
+                <span className="text-slate-700 font-extrabold font-mono">
+                  {quotes.VOO ? formatCurrency(quotes.VOO.price) : "--"}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
